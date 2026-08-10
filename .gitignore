@@ -1,0 +1,6 @@
+.ai
+.venv
+.idea
+.cache/
+manic.sqlite
+__pycache__
