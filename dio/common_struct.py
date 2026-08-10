@@ -64,6 +64,11 @@ class KeysoundEntry:
     name: str
     volume: int      # archive-side volume 0..127 (multiplied with the note's own velocity at play time)
     pan: int         # 64 = centre
+    # audio payload locators (render side); zero-filled when only the chart side is in play
+    offset: int = 0      # relative to the archive's data_start
+    filesize: int = 0    # exact payload length; v0 archives' LAST entry may overflow EOF by <=16 bytes
+    rate_hz: int = 0
+    channels: int = 0
 
 
 @dataclass
