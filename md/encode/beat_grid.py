@@ -39,6 +39,13 @@ class BeatTimeMap:
         return self.arr_ms[index_segment] \
             + (arr_beat_unit - self.arr_beat[index_segment]) * self.arr_ms_per_unit[index_segment]
 
+    def beat_of_ms(self, time_ms: float) -> float:
+        """Inverse map: the (fractional) 1/480-beat position at a wall-clock time. Charts can
+        outlive their audio (endpos past the opus end), so consumers use this to cap sampling."""
+        index_segment = max(0, int(np.searchsorted(self.arr_ms, time_ms, side="right")) - 1)
+        return float(self.arr_beat[index_segment]
+                     + (time_ms - self.arr_ms[index_segment]) / self.arr_ms_per_unit[index_segment])
+
 
 def grid_frame_beats(end_beat: int, steps_per_beat: int = config.GRID_STEPS_PER_BEAT) -> np.ndarray:
     """The beat positions (native 1/480 units) of every grid feature frame from beat 0 to end_beat"""
@@ -50,6 +57,8 @@ def resample_to_grid(feat_native: np.ndarray, arr_time_ms: np.ndarray) -> np.nda
     """Linearly interpolate native frame-major features [n_frame, n_layer, dim] at the given wall
     times -> [len(arr_time_ms), n_layer, dim]. Positions are clamped to the valid frame range, so a
     grid frame past the audio end holds the last native frame rather than garbage."""
+    if len(feat_native) == 0:
+        raise ValueError("resample_to_grid got an empty feature slice -- window sampled past the audio end?")
     arr_pos = np.asarray(arr_time_ms, dtype=np.float64) / 1000.0 * config.MUQ_FRAME_HZ
     arr_pos = np.clip(arr_pos, 0.0, len(feat_native) - 1.0)
     index_lo = arr_pos.astype(np.int64)
