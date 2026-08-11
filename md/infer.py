@@ -13,9 +13,13 @@ from .dataset import WindowDataset
 MAX_SIMULTANEOUS_HANDS = 2
 
 
-def infer_song_probs(model, vec_entry: list, path_audio_db, str_device: str, batch_size: int) -> dict:
-    """Tiled whole-song inference -> {index_entry: dict(onset_prob [n,9], velocity [n,9], pedal [n])}"""
-    loader = DataLoader(WindowDataset(vec_entry, path_audio_db, tiled=True), batch_size=batch_size, num_workers=2)
+def infer_song_probs(model, vec_entry: list, path_audio_db, str_device: str, batch_size: int,
+                     window_beats: int = 16) -> dict:
+    """Tiled whole-song inference -> {index_entry: dict(onset_prob [n,9], velocity [n,9], pedal [n])}.
+    window_beats must match the training context (carried in the checkpoint since f1s3)."""
+    loader = DataLoader(WindowDataset(vec_entry, path_audio_db, tiled=True,
+                                      use_mel=getattr(model, "use_mel", False), window_beats=window_beats),
+                        batch_size=batch_size, num_workers=2)
     map_result = {index: {"onset_prob": np.zeros_like(entry.arr_onset, dtype=np.float32),
                           "velocity": np.zeros_like(entry.arr_velocity),
                           "pedal": np.zeros_like(entry.arr_pedal)}
@@ -24,7 +28,8 @@ def infer_song_probs(model, vec_entry: list, path_audio_db, str_device: str, bat
     model.eval()
     with torch.no_grad():
         for batch in loader:
-            output = model(batch["feat"].to(str_device), batch["tatum_lo"].to(str_device))
+            mel = batch["mel"].to(str_device) if "mel" in batch else None
+            output = model(batch["feat"].to(str_device), batch["tatum_lo"].to(str_device), mel=mel)
             arr_prob = torch.sigmoid(output["onset"]).cpu().numpy()
             arr_velocity = output["velocity"].cpu().numpy()
             arr_pedal = output["pedal"].argmax(dim=-1).cpu().numpy()

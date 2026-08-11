@@ -53,20 +53,22 @@ def grid_frame_beats(end_beat: int, steps_per_beat: int = config.GRID_STEPS_PER_
     return np.arange(0, end_beat + stride_unit, stride_unit, dtype=np.int64)
 
 
-def resample_to_grid(feat_native: np.ndarray, arr_time_ms: np.ndarray) -> np.ndarray:
-    """Linearly interpolate native frame-major features [n_frame, n_layer, dim] at the given wall
-    times -> [len(arr_time_ms), n_layer, dim]. Positions are clamped to the valid frame range, so a
-    grid frame past the audio end holds the last native frame rather than garbage."""
+def resample_to_grid(feat_native: np.ndarray, arr_time_ms: np.ndarray,
+                     frame_hz: float = config.MUQ_FRAME_HZ) -> np.ndarray:
+    """Linearly interpolate native frame-major features [n_frame, ...] at the given wall times ->
+    [len(arr_time_ms), ...]. frame_hz names the native rate (25Hz MuQ by default; the log-mel
+    sidecar passes its own). Positions are clamped to the valid frame range, so a grid frame past
+    the audio end holds the last native frame rather than garbage."""
     if len(feat_native) == 0:
         raise ValueError("resample_to_grid got an empty feature slice -- window sampled past the audio end?")
-    arr_pos = np.asarray(arr_time_ms, dtype=np.float64) / 1000.0 * config.MUQ_FRAME_HZ
+    arr_pos = np.asarray(arr_time_ms, dtype=np.float64) / 1000.0 * frame_hz
     arr_pos = np.clip(arr_pos, 0.0, len(feat_native) - 1.0)
     index_lo = arr_pos.astype(np.int64)
     index_hi = np.minimum(index_lo + 1, len(feat_native) - 1)
-    frac = (arr_pos - index_lo).astype(feat_native.dtype if feat_native.dtype.kind == "f" else np.float32)
+    frac = (arr_pos - index_lo).astype(np.float32).reshape(-1, *([1] * (feat_native.ndim - 1)))
     lo = feat_native[index_lo].astype(np.float32)
     hi = feat_native[index_hi].astype(np.float32)
-    return lo + (hi - lo) * frac[:, None, None].astype(np.float32)
+    return lo + (hi - lo) * frac
 
 
 def grid_features(feat_native: np.ndarray, time_map: BeatTimeMap, end_beat: int,

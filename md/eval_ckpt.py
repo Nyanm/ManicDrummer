@@ -84,15 +84,20 @@ def main():
     parser.add_argument("--sweep", action="store_true", help="2-fold cross-fitted per-lane thresholds")
     parser.add_argument("--top2", action="store_true", help="apply the simultaneity constraint")
     parser.add_argument("--records", default="", help="write per-song records JSON here")
+    parser.add_argument("--save-calibration", action="store_true",
+                        help="tune per-lane thresholds on ALL val songs and write <ckpt>.calibration.json "
+                             "(the production decode artifact; honest eval numbers still come from --sweep)")
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
     _, vec_val = split_entries(load_song_entries(args.manic, args.audio_db))
     print(f"val songs: {len(vec_val)}", file=sys.stderr)
-    model = DrumDetector().to(args.device)
-    model.load_state_dict(torch.load(args.ckpt, map_location=args.device)["model"])
-    map_result = infer_song_probs(model, vec_val, args.audio_db, args.device, args.batch)
+    state = torch.load(args.ckpt, map_location=args.device)
+    model = DrumDetector(use_mel=state.get("use_mel", False)).to(args.device)
+    model.load_state_dict(state["model"])
+    map_result = infer_song_probs(model, vec_val, args.audio_db, args.device, args.batch,
+                                  state.get("window_beats", 16))
 
     protocol = {"ckpt": args.ckpt, "sweep": args.sweep, "top2": args.top2, "n_song": len(vec_val)}
     if not args.sweep:
@@ -111,6 +116,13 @@ def main():
     report(vec_song_eval)
     if args.records:
         dump_records(args.records, protocol, vec_song_eval)
+    if args.save_calibration:
+        vec_threshold = tune_thresholds(vec_val, map_result, list(range(len(vec_val))))
+        path_calibration = args.ckpt + ".calibration.json"
+        with open(path_calibration, "w", encoding="utf-8") as handle:
+            json.dump({"thresholds": vec_threshold, "top2_hands": True,
+                       "tuned_on": f"val x{len(vec_val)}", "ckpt": args.ckpt}, handle, indent=1)
+        print(f"calibration -> {path_calibration}  thresholds={vec_threshold}", file=sys.stderr)
 
 
 if __name__ == "__main__":

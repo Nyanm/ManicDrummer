@@ -26,8 +26,7 @@ from msql.audio_db import AudioDb
 
 TATUM_PER_BEAT = 24                          # 1/24 beat; GRID_PER_BEAT // TATUM_PER_BEAT = 2 grid ticks
 _GRID_PER_TATUM = GRID_PER_BEAT // TATUM_PER_BEAT
-WINDOW_BEATS = 16
-WINDOW_TATUMS = WINDOW_BEATS * TATUM_PER_BEAT
+WINDOW_BEATS_DEFAULT = 16                    # context length; an ablation knob since f1s3 (per-dataset)
 VAL_STRIDE = 23                              # every 23rd song (seq_id order) validates, ~60 songs (M2 f0s1;
                                              # the M1 24-song numbers are void under this split)
 
@@ -95,16 +94,21 @@ def split_entries(vec_entry: list) -> tuple[list, list]:
 
 class WindowDataset(Dataset):
     """Random (train) or tiled (val) windows over songs. Feature reads open the AudioDb lazily per
-    worker (sqlite connections cannot cross process boundaries)."""
+    worker (sqlite connections cannot cross process boundaries). use_mel adds the log-mel sidecar
+    channel (f1s2) interpolated on the same tatum times."""
 
-    def __init__(self, vec_entry: list, path_audio_db, windows_per_song: int = 4, tiled: bool = False):
+    def __init__(self, vec_entry: list, path_audio_db, windows_per_song: int = 4, tiled: bool = False,
+                 use_mel: bool = False, window_beats: int = WINDOW_BEATS_DEFAULT):
         self.vec_entry = vec_entry
         self.path_audio_db = path_audio_db
         self.windows_per_song = windows_per_song
         self.tiled = tiled
+        self.use_mel = use_mel
+        self.window_beats = window_beats
+        self.window_tatums = window_beats * TATUM_PER_BEAT
         self._db = None
         self.vec_index = []                  # (index_entry, beat_start) -- beat_start in native 1/480 units
-        window_units = WINDOW_BEATS * 480
+        window_units = self.window_beats * 480
         for index_entry, entry in enumerate(vec_entry):
             if self.tiled:
                 for beat_start in range(0, max(1, entry.end_beat - window_units), window_units):
@@ -123,7 +127,7 @@ class WindowDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         index_entry, beat_start = self.vec_index[index]
         entry = self.vec_entry[index_entry]
-        window_units = WINDOW_BEATS * 480
+        window_units = self.window_beats * 480
         if beat_start < 0:  # train: random window (beat-aligned start keeps the phase embedding honest)
             beat_max = max(0, entry.end_beat - window_units)
             beat_start = random.randrange(0, beat_max + 480, 480) if beat_max > 0 else 0
@@ -137,16 +141,16 @@ class WindowDataset(Dataset):
         feat = resample_to_grid(feat_native, arr_time_ms - frame_lo * 40.0)
 
         tatum_lo = beat_start // (480 // TATUM_PER_BEAT)
-        pad = WINDOW_TATUMS - min(WINDOW_TATUMS, len(entry.arr_onset) - tatum_lo)
-        take = WINDOW_TATUMS - pad
-        onset = np.zeros((WINDOW_TATUMS, N_LANE), dtype=np.float32)
-        velocity = np.zeros((WINDOW_TATUMS, N_LANE), dtype=np.float32)
-        pedal = np.full(WINDOW_TATUMS, PEDAL_NONE, dtype=np.int64)
+        pad = self.window_tatums - min(self.window_tatums, len(entry.arr_onset) - tatum_lo)
+        take = self.window_tatums - pad
+        onset = np.zeros((self.window_tatums, N_LANE), dtype=np.float32)
+        velocity = np.zeros((self.window_tatums, N_LANE), dtype=np.float32)
+        pedal = np.full(self.window_tatums, PEDAL_NONE, dtype=np.int64)
         onset[:take] = entry.arr_onset[tatum_lo:tatum_lo + take]
         velocity[:take] = entry.arr_velocity[tatum_lo:tatum_lo + take]
         pedal[:take] = entry.arr_pedal[tatum_lo:tatum_lo + take]
 
-        return {
+        item = {
             "feat": torch.from_numpy(np.ascontiguousarray(feat, dtype=np.float32)),
             "onset": torch.from_numpy(onset),
             "velocity": torch.from_numpy(velocity),
@@ -154,3 +158,12 @@ class WindowDataset(Dataset):
             "index_entry": index_entry,
             "tatum_lo": tatum_lo,
         }
+        if self.use_mel:
+            from md.encode.mel import MEL_FRAME_HZ, mel_path, read_mel_window
+            frame_lo_mel = max(0, int(arr_time_ms[0] * MEL_FRAME_HZ / 1000.0) - 2)
+            mel_native = read_mel_window(mel_path(self.path_audio_db, entry.audio_key),
+                                         frame_lo_mel, int(arr_time_ms[-1] * MEL_FRAME_HZ / 1000.0) + 3)
+            mel = resample_to_grid(mel_native, arr_time_ms - frame_lo_mel * 1000.0 / MEL_FRAME_HZ,
+                                   frame_hz=MEL_FRAME_HZ)
+            item["mel"] = torch.from_numpy(np.ascontiguousarray(mel, dtype=np.float32))
+        return item

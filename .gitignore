@@ -4,3 +4,4 @@
 .cache/
 manic.sqlite
 __pycache__
+.out/
