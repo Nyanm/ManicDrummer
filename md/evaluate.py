@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from dio.common_struct import N_LANE, PEDAL_BD, PEDAL_HH
+from dio.common_struct import N_LANE, PEDAL_BD, PEDAL_HH, VEC_LANE_HAND
 
 TOLERANCE_MS = 50.0
-MAX_SIMULTANEOUS = 2
+MAX_SIMULTANEOUS_HANDS = 2  # the legality metric counts HAND lanes only (feet exempt, m2f0s2)
 
 
 @dataclass
@@ -83,9 +83,9 @@ def evaluate_song(audio_key: str, time_map, arr_true_onset: np.ndarray, arr_true
                     result.cnt_pedal_match += 1
                     result.cnt_pedal_correct += int(arr_pred_pedal[vec_pred[index_pred]]) == pedal_true
 
-    arr_count = arr_pred_onset[:n_tatum].sum(axis=1)
-    result.cnt_tatum_pred = int((arr_count > 0).sum())
-    result.cnt_tatum_illegal = int((arr_count > MAX_SIMULTANEOUS).sum())
+    arr_count_hand = arr_pred_onset[:n_tatum][:, VEC_LANE_HAND].sum(axis=1)
+    result.cnt_tatum_pred = int((arr_pred_onset[:n_tatum].sum(axis=1) > 0).sum())
+    result.cnt_tatum_illegal = int((arr_count_hand > MAX_SIMULTANEOUS_HANDS).sum())
     return result
 
 
@@ -121,5 +121,5 @@ def report(vec_song_eval: list) -> dict:
     print("  per lane: " + "  ".join(f"{name} {t.f1():.3f}" for name, t in zip(lane_names, total)))
     print(f"  velocity MAE {summary['velocity_mae']:.4f}  pedal acc "
           f"{summary['pedal_acc'] if summary['pedal_acc'] is not None else float('nan'):.3f}  "
-          f"illegal>{MAX_SIMULTANEOUS} rate {summary['illegal_rate']:.4f}")
+          f"illegal>{MAX_SIMULTANEOUS_HANDS}hands rate {summary['illegal_rate']:.4f}")
     return summary

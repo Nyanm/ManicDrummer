@@ -20,6 +20,7 @@ from dio.common_struct import N_LANE, PEDAL_NONE, PEDAL_UNKNOWN
 from .dataset import TATUM_PER_BEAT, WindowDataset, load_song_entries, split_entries
 from .detector import DrumDetector, phase_weight
 from .evaluate import evaluate_song, report
+from .infer import decode_onsets, infer_song_probs
 
 SEED = 7
 
@@ -49,33 +50,16 @@ def loss_of(output: dict, batch: dict, pos_weight: torch.Tensor) -> torch.Tensor
 
 
 def validate(model, vec_entry_val, path_audio_db, str_device, batch_size) -> dict:
-    """Tiled whole-song inference -> stitch per song -> event-F1 report"""
-    dataset = WindowDataset(vec_entry_val, path_audio_db, tiled=True)
-    loader = DataLoader(dataset, batch_size=batch_size, num_workers=2)
-    map_pred = {index: [np.zeros_like(entry.arr_onset), np.zeros_like(entry.arr_velocity),
-                        np.zeros_like(entry.arr_pedal)]
-                for index, entry in enumerate(vec_entry_val)}
-    model.eval()
-    with torch.no_grad():
-        for batch in loader:
-            output = model(batch["feat"].to(str_device), batch["tatum_lo"].to(str_device))
-            arr_onset = (torch.sigmoid(output["onset"]) >= 0.5).cpu().numpy()
-            arr_velocity = output["velocity"].cpu().numpy()
-            arr_pedal = output["pedal"].argmax(dim=-1).cpu().numpy()
-            for index_in_batch in range(len(arr_onset)):
-                index_entry = int(batch["index_entry"][index_in_batch])
-                tatum_lo = int(batch["tatum_lo"][index_in_batch])
-                pred = map_pred[index_entry]
-                take = min(arr_onset.shape[1], len(pred[0]) - tatum_lo)
-                if take <= 0:
-                    continue
-                pred[0][tatum_lo:tatum_lo + take] = arr_onset[index_in_batch, :take]
-                pred[1][tatum_lo:tatum_lo + take] = arr_velocity[index_in_batch, :take]
-                pred[2][tatum_lo:tatum_lo + take] = arr_pedal[index_in_batch, :take]
-    model.train()
-    vec_song_eval = [evaluate_song(entry.audio_key, entry.time_map, entry.arr_onset, entry.arr_velocity,
-                                   entry.arr_pedal, *map_pred[index], TATUM_PER_BEAT)
-                     for index, entry in enumerate(vec_entry_val)]
+    """Tiled whole-song inference -> decode at flat 0.5 (training-time quick look; the calibrated
+    protocol lives in md.eval_ckpt) -> event-F1 report"""
+    map_result = infer_song_probs(model, vec_entry_val, path_audio_db, str_device, batch_size)
+    vec_song_eval = []
+    for index, entry in enumerate(vec_entry_val):
+        result = map_result[index]
+        arr_onset = decode_onsets(result["onset_prob"], [0.5] * N_LANE)
+        vec_song_eval.append(evaluate_song(entry.audio_key, entry.time_map, entry.arr_onset,
+                                           entry.arr_velocity, entry.arr_pedal, arr_onset,
+                                           result["velocity"], result["pedal"], TATUM_PER_BEAT))
     return report(vec_song_eval)
 
 

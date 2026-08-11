@@ -15,7 +15,16 @@ LANE_AUTO = 0xFF
 # lane byte (event offset 0x30) -> pad, frozen by m1f0s2 (gitadora-customs cross-checked on the full library)
 LANE_NAMES = ["hihat", "snare", "bass", "hightom", "lowtom", "rightcymbal", "leftcymbal", "floortom", "leftpedal"]
 N_LANE = 9
+LANE_BASS = 2
 LANE_LEFT_PEDAL = 8
+
+"""
+The simultaneity constraint is about HANDS: lanes 2 (bass) and 8 (leftpedal) are FEET, so
+kick + snare + crash three-lane chords are legal and common (m2f0s2 ground truth: 8% of onset
+tatums hold 3-4 lanes overall, while >2 HAND lanes is 0.72%). Any decode rule or legality metric
+must count over VEC_LANE_HAND, never over all nine lanes.
+"""
+VEC_LANE_HAND = [0, 1, 3, 4, 5, 6, 7]
 
 # per-note semantic of a leftpedal (lane 8) note; PEDAL_NONE for every other lane
 PEDAL_NONE, PEDAL_HH, PEDAL_BD, PEDAL_UNKNOWN = 0, 1, 2, 3

@@ -28,7 +28,8 @@ TATUM_PER_BEAT = 24                          # 1/24 beat; GRID_PER_BEAT // TATUM
 _GRID_PER_TATUM = GRID_PER_BEAT // TATUM_PER_BEAT
 WINDOW_BEATS = 16
 WINDOW_TATUMS = WINDOW_BEATS * TATUM_PER_BEAT
-VAL_STRIDE = 57                              # every 57th song (seq_id order) is validation, ~24 songs
+VAL_STRIDE = 23                              # every 23rd song (seq_id order) validates, ~60 songs (M2 f0s1;
+                                             # the M1 24-song numbers are void under this split)
 
 
 @dataclass
